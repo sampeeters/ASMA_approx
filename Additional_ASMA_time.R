@@ -108,7 +108,7 @@ ASMA_results_airport_yearly=mutate(ASMA_results, Year=strftime(LOBT,format = "%Y
   group_by(ADES, Year) %>% 
   summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE))
 
-Saved=saveRDS(ASMA_results_airport_daily, paste0('Results/ASMA_results_airport_daily.RDS'))
-Saved=saveRDS(ASMA_results_airport_monthly, paste0('Results/ASMA_results_airport_monthly.RDS'))
-Saved=saveRDS(ASMA_results_airport_yearly, paste0('Results/ASMA_results_airport_yearly.RDS'))
+Saved=saveRDS(ASMA_results_airport_daily, 'Results/ASMA_results_airport_daily.RDS')
+Saved=saveRDS(ASMA_results_airport_monthly, 'Results/ASMA_results_airport_monthly.RDS')
+Saved=saveRDS(ASMA_results_airport_yearly, 'Results/ASMA_results_airport_yearly.RDS')
 
