@@ -41,7 +41,7 @@ ggplot() +
         legend.key.size = unit(2.5, 'lines'),
         legend.position="bottom",
         axis.title=element_text(size=38)) +
-  scale_x_date(labels = date_format("%m-%Y")) +
+  scale_x_date(labels = date_format("%d-%m-%Y")) +
   labs(x="", y="Additional ASMA time (min)\n", title=paste0("Additional ASMA time (", Airport,")")) +
   ylim(c(0, max(res$AdASMA)))
 ggsave(paste0("Figures/Additional_ASMA_", Airport, ".png"), width = 50, height = 30, units = "cm", dpi=200)
