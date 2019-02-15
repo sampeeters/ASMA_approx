@@ -8,7 +8,7 @@ Sys.setenv(ORA_SDTZ = "UTC")
 
 Airport="EIDW"
 start_date="01-jan-2016"
-end_date="01-feb-2018"
+end_date="01-feb-2019"
 
 drv <- dbDriver("Oracle")
 con <- dbConnect(drv, "PRUTEST", "test", dbname='//porape5.ops.cfmu.eurocontrol.be:1521/pe5')
@@ -91,22 +91,26 @@ ASMA_results=mutate(Flight_data_group, AdASMA=AcASMA-UASMA)
 ## Step D: Calculation of the Additional ASMA Time per airport
 
 ASMA_results_airport=group_by(ASMA_results, ADES) %>% 
-  summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE))
+  summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE),
+            UASMA_APT=mean(UASMA, na.rm=TRUE))
 
 ASMA_results_airport_daily=mutate(ASMA_results, Day=strftime(LOBT,format = "%d-%b-%Y")) %>%
   group_by(ADES, Day) %>% 
-  summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE))
+  summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE),
+            UASMA_APT=mean(UASMA, na.rm=TRUE))
 
 ASMA_results_airport_monthly=mutate(ASMA_results, Month=strftime(LOBT,format = "%b"), Year=strftime(LOBT,format = "%Y")) %>%
   group_by(ADES, Month, Year) %>% 
-  summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE))
+  summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE),
+            UASMA_APT=mean(UASMA, na.rm=TRUE))
 ASMA_results_airport_monthly$Month=factor(ASMA_results_airport_monthly$Month, levels=month.abb)
 ASMA_results_airport_monthly$Year=factor(ASMA_results_airport_monthly$Year, levels=unique(ASMA_results_airport_monthly$Year))
 ASMA_results_airport_monthly=arrange(ASMA_results_airport_monthly, Year, Month)
 
 ASMA_results_airport_yearly=mutate(ASMA_results, Year=strftime(LOBT,format = "%Y")) %>%
   group_by(ADES, Year) %>% 
-  summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE))
+  summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE),
+            UASMA_APT=mean(UASMA, na.rm=TRUE))
 
 Saved=saveRDS(ASMA_results_airport_daily, 'Results/ASMA_results_airport_daily.RDS')
 Saved=saveRDS(ASMA_results_airport_monthly, 'Results/ASMA_results_airport_monthly.RDS')
