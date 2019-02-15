@@ -3,17 +3,25 @@ library(dplyr)
 library(ROracle)
 library(geosphere)
 
+Sys.setenv(TZ = "UTC")
+Sys.setenv(ORA_SDTZ = "UTC")
+
+Airport="EIDW"
+start_date="01-jan-2016"
+end_date="01-feb-2018"
+
 drv <- dbDriver("Oracle")
 con <- dbConnect(drv, "PRUTEST", "test", dbname='//porape5.ops.cfmu.eurocontrol.be:1521/pe5')
-Flx_data=dbGetQuery(con, paste0("SELECT ID, LOBT, ADEP, ADES
+Flx_data=dbGetQuery(con, paste0("SELECT ID, LOBT, ADEP, ADES, AIRCRAFT_TYPE_ICAO_ID
                                 FROM FLX.FLIGHT
-                                WHERE LOBT >= '01-jan-2018'
-                                AND LOBT < '02-jan-2018'
-                                AND FLT_RULES='I'"))
+                                WHERE LOBT >= '", start_date, "'
+                                AND LOBT < '", end_date, "'
+                                AND FLT_RULES='I'
+                                AND ADES='", Airport, "'"))
 Circle_data=dbGetQuery(con, paste0("SELECT SAM_ID, LOBT, ENTRY_TIME, EXIT_TIME, ENTRY_LAT, ENTRY_LON, AIRSPACE_ID
                                 FROM FSD.ALL_FT_CIRCLE_PROFILE
-                                WHERE LOBT >= '01-jan-2018'
-                                AND LOBT < '02-jan-2018'
+                                WHERE LOBT >= '", start_date, "'
+                                AND LOBT < '", end_date, "'
                                 AND model_type = 'CPF'
                                 AND AIRSPACE_ID IN ('L40','L100')"))
 APT_data <- dbGetQuery(con, "SELECT * FROM SP_AIRPORT_INFO")
@@ -24,7 +32,9 @@ ASMA_sectors=dbGetQuery(con2, "SELECT * FROM ASMA_SECTOR") %>%
   mutate(ASMA_RADIUS=paste0("L", ASMA_RADIUS))
 dbDisconnect(con2)
 
-Flight_data=inner_join(Flx_data, Circle_data, by=c("ID"="SAM_ID", "LOBT"="LOBT"))
+Flight_data=inner_join(Flx_data, Circle_data, by=c("ID"="SAM_ID", "LOBT"="LOBT")) %>% 
+  arrange(ADES, AIRSPACE_ID, EXIT_TIME)
+Acft_groups=readRDS("Data/Acft_groups.RDS")
 
 # Split ASMA sectors which include 0°
 ASMA_sectors=mutate(ASMA_sectors, FROM_BEARING=ifelse(FROM_BEARING==360, 0, FROM_BEARING), TO_BEARING=ifelse(TO_BEARING==360, 0, TO_BEARING)) %>% 
@@ -52,23 +62,26 @@ for (APT in unique(ASMA_sectors$AIRPORT)) {
 
 ## Step A: Filtering
 
-Flight_data_filter=filter(Flight_data, !is.na(ENTRY_TIME) & !is.na(EXIT_TIME)) %>% 
-  mutate(AcASMA=EXIT_TIME-ENTRY_TIME) %>% 
-  filter(AcASMA<120*60
+Flight_data_filter=filter(Flight_data, !is.na(ENTRY_TIME) & !is.na(EXIT_TIME) & ADES %in% ASMA_sectors_ext$AIRPORT) %>% 
+  mutate(AcASMA=difftime(EXIT_TIME, ENTRY_TIME, units="hours")) %>% 
+  filter(AcASMA<2
          # & !ACFT_CAT=="H"
-         )
+  )
 
 
 ## Step B: Determination of unimpeded time AC-SEC combination
+
+Unimp_ASMA=readRDS(file="Results/Unimpeded_ASMA.RDS")
 
 Flight_data_group=filter(Flight_data_filter, ADES %in% ASMA_sectors_ext$AIRPORT) %>% 
   left_join(select(APT_data, ICAO_CODE, ARP_LAT, ARP_LON), by=c("ADES"="ICAO_CODE")) %>% 
   mutate(Bearing=bearingRhumb(cbind(ARP_LON, ARP_LAT), cbind(ENTRY_LON, ENTRY_LAT))) %>% 
   left_join(ASMA_sectors_ext, by=c("ADES"="AIRPORT", "AIRSPACE_ID"="ASMA_RADIUS")) %>% 
   filter(Bearing>=FROM_BEARING & Bearing<TO_BEARING) %>% 
-  select(ID, LOBT, ADES, AIRSPACE_ID, AcASMA, ASMA_SECTOR)
-# Add aircraft category and unimpeded ASMA time (UASMA)
-
+  left_join(Acft_groups, by=c("AIRCRAFT_TYPE_ICAO_ID"="ARCTYP")) %>% 
+  mutate(FLT_GROUP=paste0(AIRSPACE_ID, "-", ASMA_SECTOR, "-", AC_CLASS)) %>% 
+  left_join(Unimp_ASMA) %>% 
+  select(ID, LOBT, ADES, FLT_GROUP, AcASMA, UASMA)
 
 ## Step C: Calculation of Additional ASMA Time per flight
 
@@ -78,7 +91,24 @@ ASMA_results=mutate(Flight_data_group, AdASMA=AcASMA-UASMA)
 ## Step D: Calculation of the Additional ASMA Time per airport
 
 ASMA_results_airport=group_by(ASMA_results, ADES) %>% 
-  summarise(AdASMA_APT=mean(AdASMA))
+  summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE))
 
+ASMA_results_airport_daily=mutate(ASMA_results, Day=strftime(LOBT,format = "%d-%b-%Y")) %>%
+  group_by(ADES, Day) %>% 
+  summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE))
 
+ASMA_results_airport_monthly=mutate(ASMA_results, Month=strftime(LOBT,format = "%b"), Year=strftime(LOBT,format = "%Y")) %>%
+  group_by(ADES, Month, Year) %>% 
+  summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE))
+ASMA_results_airport_monthly$Month=factor(ASMA_results_airport_monthly$Month, levels=month.abb)
+ASMA_results_airport_monthly$Year=factor(ASMA_results_airport_monthly$Year, levels=unique(ASMA_results_airport_monthly$Year))
+ASMA_results_airport_monthly=arrange(ASMA_results_airport_monthly, Year, Month)
+
+ASMA_results_airport_yearly=mutate(ASMA_results, Year=strftime(LOBT,format = "%Y")) %>%
+  group_by(ADES, Year) %>% 
+  summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE))
+
+Saved=saveRDS(ASMA_results_airport_daily, paste0('Results/ASMA_results_airport_daily.RDS'))
+Saved=saveRDS(ASMA_results_airport_monthly, paste0('Results/ASMA_results_airport_monthly.RDS'))
+Saved=saveRDS(ASMA_results_airport_yearly, paste0('Results/ASMA_results_airport_yearly.RDS'))
 

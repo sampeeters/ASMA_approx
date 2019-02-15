@@ -2,14 +2,21 @@
 library(dplyr)
 library(ROracle)
 library(geosphere)
+library(lubridate)
+
+Sys.setenv(TZ = "UTC")
+Sys.setenv(ORA_SDTZ = "UTC")
+
+Airport="EIDW"
 
 drv <- dbDriver("Oracle")
 con <- dbConnect(drv, "PRUTEST", "test", dbname='//porape5.ops.cfmu.eurocontrol.be:1521/pe5')
-Flx_data=dbGetQuery(con, paste0("SELECT ID, LOBT, ADEP, ADES
+Flx_data=dbGetQuery(con, paste0("SELECT ID, LOBT, ADEP, ADES, AIRCRAFT_TYPE_ICAO_ID
                                 FROM FLX.FLIGHT
                                 WHERE LOBT >= '01-jan-2016'
                                 AND LOBT < '01-jan-2017'
-                                AND FLT_RULES='I'"))
+                                AND FLT_RULES='I'
+                                AND ADES='", Airport, "'"))
 Circle_data=dbGetQuery(con, paste0("SELECT SAM_ID, LOBT, ENTRY_TIME, EXIT_TIME, ENTRY_LAT, ENTRY_LON, AIRSPACE_ID
                                    FROM FSD.ALL_FT_CIRCLE_PROFILE
                                    WHERE LOBT >= '01-jan-2016'
@@ -24,7 +31,9 @@ ASMA_sectors=dbGetQuery(con2, "SELECT * FROM ASMA_SECTOR") %>%
   mutate(ASMA_RADIUS=paste0("L", ASMA_RADIUS))
 dbDisconnect(con2)
 
-Flight_data=inner_join(Flx_data, Circle_data, by=c("ID"="SAM_ID", "LOBT"="LOBT"))
+Flight_data=inner_join(Flx_data, Circle_data, by=c("ID"="SAM_ID", "LOBT"="LOBT")) %>% 
+  arrange(ADES, AIRSPACE_ID, EXIT_TIME)
+Acft_groups=readRDS("Data/Acft_groups.RDS")
 
 # Split ASMA sectors which include 0°
 ASMA_sectors=mutate(ASMA_sectors, FROM_BEARING=ifelse(FROM_BEARING==360, 0, FROM_BEARING), TO_BEARING=ifelse(TO_BEARING==360, 0, TO_BEARING)) %>% 
@@ -52,32 +61,69 @@ for (APT in unique(ASMA_sectors$AIRPORT)) {
 
 ## Step 1: Filtering
 
-Flight_data_filter=filter(Flight_data, !is.na(ENTRY_TIME) & !is.na(EXIT_TIME)) %>% 
-  mutate(AcASMA=EXIT_TIME-ENTRY_TIME) %>% 
-  filter(AcASMA<120*60
+Flight_data_filter=filter(Flight_data, !is.na(ENTRY_TIME) & !is.na(EXIT_TIME) & ADES %in% ASMA_sectors_ext$AIRPORT) %>% 
+  mutate(AcASMA=difftime(EXIT_TIME, ENTRY_TIME, units="hours")) %>% 
+  filter(AcASMA<2
          # & !ACFT_CAT=="H"
   )
 
 
-## Step 2: Computations at flight level: ASMA Time (see Step 1), Congestion level
+## Step 2 + Step 3b: Computations at flight level: ASMA Time (see Step 1), Congestion level + Calculation of Arrival Throughput
 
-Cong_lvl=data.frame()
-for (flight_id in Flight_data_filter$ID) {
-  
-  temp=filter(Flight_data_filter, ID==flight_id)
-  
+Flight_data_filter$Cong_lvl=NA
+Flight_data_filter$Hourly_rate=NA
+Flight_data_cong=data.frame()
+for (APT in unique(Flight_data_filter$ADES)) {
+  for (RADIUS in c("L40", "L100")) {
+    temp=filter(Flight_data_filter, ADES==APT, AIRSPACE_ID==RADIUS)
+    if (nrow(temp)>0) {
+      for (i in seq(1, nrow(temp))) {
+        temp$Cong_lvl[i]=nrow(filter(temp, temp$ENTRY_TIME[i]<=EXIT_TIME & EXIT_TIME<=temp$EXIT_TIME[i]))-1
+        temp$Hourly_rate[i]=(nrow(filter(temp, temp$EXIT_TIME[i]-20*60<=EXIT_TIME & EXIT_TIME<=temp$EXIT_TIME[i]))-1)/
+          as.numeric(difftime(temp$EXIT_TIME[i],min(filter(temp, temp$EXIT_TIME[i]-20*60<=EXIT_TIME & EXIT_TIME<=temp$EXIT_TIME[i])$EXIT_TIME), units="hours"))
+      }
+      Flight_data_cong=rbind(Flight_data_cong, temp)
+      print(paste0(APT, "-", RADIUS, "-", nrow(temp)))
+    }
+  }
 }
 
+## Step 3: Computation of the Saturation level
 
-## Step C: Calculation of Additional ASMA Time per flight
+cl=0.5
 
-ASMA_results=mutate(Flight_data_group, AdASMA=AcASMA-UASMA)
+Peak_hourly_arr_throughput=group_by(Flight_data_cong, ADES) %>% 
+  summarise(R=quantile(Hourly_rate, probs=0.9, na.rm=TRUE))
+
+Flight_data_group=left_join(Flight_data_cong, select(APT_data, ICAO_CODE, ARP_LAT, ARP_LON), by=c("ADES"="ICAO_CODE")) %>% 
+  mutate(Bearing=bearingRhumb(cbind(ARP_LON, ARP_LAT), cbind(ENTRY_LON, ENTRY_LAT))) %>% 
+  left_join(ASMA_sectors_ext, by=c("ADES"="AIRPORT", "AIRSPACE_ID"="ASMA_RADIUS")) %>% 
+  filter(Bearing>=FROM_BEARING & Bearing<TO_BEARING) %>% 
+  left_join(Acft_groups, by=c("AIRCRAFT_TYPE_ICAO_ID"="ARCTYP")) %>% 
+  mutate(FLT_GROUP=paste0(AIRSPACE_ID, "-", ASMA_SECTOR, "-", AC_CLASS))
+
+Flight_data_sat=group_by(Flight_data_group, ADES, FLT_GROUP) %>% 
+  summarise(U1=as.numeric(quantile(AcASMA, probs = 0.2)))
+
+Sat_lvl=left_join(Peak_hourly_arr_throughput, Flight_data_sat, by=c("ADES")) %>% 
+  mutate(L=round(R*U1))
+
+## Step 4: Identification of unimpeded flights
+
+Flight_data_unimp=left_join(Flight_data_group, Sat_lvl, by=c("ADES", "FLT_GROUP")) %>% 
+  mutate(Unimpeded=ifelse(Cong_lvl<=(cl*L), TRUE, FALSE))
 
 
-## Step D: Calculation of the Additional ASMA Time per airport
+## Step 5: Computation of unimpeded time per grouping
 
-ASMA_results_airport=group_by(ASMA_results, ADES) %>% 
-  summarise(AdASMA_APT=mean(AdASMA))
+Unimp_ASMA=filter(Flight_data_unimp, Unimpeded==TRUE,
+         (as.numeric(format(EXIT_TIME, "%H")) + as.numeric(format(EXIT_TIME, "%M"))/60 + as.numeric(format(EXIT_TIME, "%S"))/3600)>=6.5,
+         (as.numeric(format(EXIT_TIME, "%H")) + as.numeric(format(EXIT_TIME, "%M"))/60 + as.numeric(format(EXIT_TIME, "%S"))/3600)<=22) %>% 
+  group_by(ADES, FLT_GROUP) %>% 
+  summarise(UASMA=median(AcASMA),
+            Nbr_flights=n()) %>% 
+  filter(Nbr_flights>=20)
+saveRDS(Unimp_ASMA, file="Results/Unimpeded_ASMA.RDS")
 
 
 
