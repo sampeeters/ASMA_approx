@@ -9,7 +9,7 @@ Airport="EIDW"
 ASMA_results_airport_daily=readRDS('Results/ASMA_results_airport_daily.RDS') %>% 
   filter(ADES==Airport)
 ASMA_results_airport_monthly=readRDS('Results/ASMA_results_airport_monthly.RDS') %>% 
-  filter(ADES==Airport) %>% 
+  filter(ADES==Airport, AIRSPACE_ID=="L40") %>% 
   mutate(Date=as.Date(strptime(paste0("01-", Month, "-", Year),"%d-%b-%Y", tz="UTC")),
          Source="Traj",
          UASMA_APT=as.numeric(UASMA_APT)*60,

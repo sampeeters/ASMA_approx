@@ -81,7 +81,7 @@ Flight_data_group=filter(Flight_data_filter, ADES %in% ASMA_sectors_ext$AIRPORT)
   left_join(Acft_groups, by=c("AIRCRAFT_TYPE_ICAO_ID"="ARCTYP")) %>% 
   mutate(FLT_GROUP=paste0(AIRSPACE_ID, "-", ASMA_SECTOR, "-", AC_CLASS)) %>% 
   left_join(Unimp_ASMA) %>% 
-  select(ID, LOBT, ADES, FLT_GROUP, AcASMA, UASMA)
+  select(ID, LOBT, ADES, FLT_GROUP, AIRSPACE_ID, AcASMA, UASMA)
 
 ## Step C: Calculation of Additional ASMA Time per flight
 
@@ -90,17 +90,17 @@ ASMA_results=mutate(Flight_data_group, AdASMA=AcASMA-UASMA)
 
 ## Step D: Calculation of the Additional ASMA Time per airport
 
-ASMA_results_airport=group_by(ASMA_results, ADES) %>% 
+ASMA_results_airport=group_by(ASMA_results, ADES, AIRSPACE_ID) %>% 
   summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE),
             UASMA_APT=mean(UASMA, na.rm=TRUE))
 
 ASMA_results_airport_daily=mutate(ASMA_results, Day=strftime(LOBT,format = "%d-%b-%Y")) %>%
-  group_by(ADES, Day) %>% 
+  group_by(ADES, Day, AIRSPACE_ID) %>% 
   summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE),
             UASMA_APT=mean(UASMA, na.rm=TRUE))
 
 ASMA_results_airport_monthly=mutate(ASMA_results, Month=strftime(LOBT,format = "%b"), Year=strftime(LOBT,format = "%Y")) %>%
-  group_by(ADES, Month, Year) %>% 
+  group_by(ADES, Month, Year, AIRSPACE_ID) %>% 
   summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE),
             UASMA_APT=mean(UASMA, na.rm=TRUE))
 ASMA_results_airport_monthly$Month=factor(ASMA_results_airport_monthly$Month, levels=month.abb)
@@ -108,7 +108,7 @@ ASMA_results_airport_monthly$Year=factor(ASMA_results_airport_monthly$Year, leve
 ASMA_results_airport_monthly=arrange(ASMA_results_airport_monthly, Year, Month)
 
 ASMA_results_airport_yearly=mutate(ASMA_results, Year=strftime(LOBT,format = "%Y")) %>%
-  group_by(ADES, Year) %>% 
+  group_by(ADES, Year, AIRSPACE_ID) %>% 
   summarise(AdASMA_APT=mean(AdASMA, na.rm=TRUE),
             UASMA_APT=mean(UASMA, na.rm=TRUE))
 
