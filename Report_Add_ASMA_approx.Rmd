@@ -1,0 +1,117 @@
+---
+author: Performance Review Unit, EUROCONTROL
+date: "`r format(Sys.time(), '%d/%m/%Y')`" 
+output: 
+  bookdown::pdf_document2:
+    fig_width: 6.3
+    fig_height: 4.7
+    fig_caption: true
+    toc: false
+    keep_tex: true
+    includes:
+      in_header: //hhbruna30/dgof-pru$/Project/Vertical_flight_efficiency/2015/En-route VFE/header.txt
+subtitle: Approximation based on trajectory data
+editor_options: 
+  chunk_output_type: console
+header-includes: 
+- \usepackage{float}
+urlcolor: blue
+subparagraph: yes
+---
+
+```{r setup, include=FALSE}
+
+library(ROracle)
+library(dplyr)
+library(knitr)
+library(bookdown)
+
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE, error=FALSE, out.width = "\\textwidth")
+Sys.setenv(TZ = "UTC")
+Sys.setenv(ORA_SDTZ = "UTC")
+options(tinytex.verbose = TRUE)
+
+# set pander table-layout options
+library(pander)
+panderOptions('table.alignment.default', function(df)
+  ifelse(sapply(df, is.numeric), 'right', 'left'))
+panderOptions('table.split.table', Inf)
+panderOptions('big.mark', ",")
+panderOptions('keep.trailing.zeros', TRUE)
+```
+
+
+```{r, include=FALSE}
+
+ASMA_results_airport_monthly=readRDS('Results/ASMA_results_airport_monthly.RDS') %>% 
+  filter(ADES==Airport, AIRSPACE_ID=="L40") %>% 
+  ungroup() %>% 
+  mutate(MONTH_NUM=match(Month, month.abb), Year=as.numeric(as.character(Year)))
+Last_av_year<<-max(ASMA_results_airport_monthly$Year)
+Last_av_month<<-filter(ASMA_results_airport_monthly, Year==Last_av_year) %>% 
+  select(MONTH_NUM) %>% 
+  as.numeric()
+curr_year=ifelse(Last_av_month==12, Last_av_year, Last_av_year-1)
+drv <- dbDriver("Oracle")
+con <- dbConnect(drv, "PRUTEST", "test", dbname='//porape5.ops.cfmu.eurocontrol.be:1521/pe5')
+APT_info <- dbGetQuery(con, "SELECT * FROM SP_AIRPORT_INFO")
+dbDisconnect(con)
+
+Airport_name=filter(APT_info, ICAO_CODE==Airport) %>% 
+  select(APT_NAME) %>% 
+  as.character()
+
+```
+
+---
+title: "`r paste0('Additonal ASMA time ', Airport_name, ' (', Airport, ')')`"
+---
+
+# Introduction
+
+## General
+This document provides results on an approximation for the additional ASMA time for `r Airport_name` as calculated by the Performance Review Unit of EUROCONTROL. More information on the methodology can be found on the [PRU website](http://http://ansperformance.eu/references/methodology/additional_asma_time_pi.html).
+
+```{r, include=FALSE}
+# Next paragraph
+```
+
+To calculate additional ASMA time using trajectory data only, the methodology has been slightly adapted. The grouping of flights is done by aircraft type group and ASMA sector, but not by runway since that information is not available nor obtainable from the trajectory data.
+
+## Acronyms and terminology
+
+```{r, echo=FALSE}
+
+Acronyms=data.frame(Term=c("ASMA", "PRU"),
+                    Definition=c("Arrival Sequencing and Metering Area", "Performance Review Unit"))
+
+pander(Acronyms)
+
+```
+
+\newpage
+# Results over time
+
+```{r, include=FALSE}
+
+if (!file.exists(paste0(dir, "Figures/Additional_ASMA_", Airport, ".png")) |
+    !file.exists(paste0(dir, "Figures/Additional_ASMA_", Airport, "_last_4_months.png"))) {
+
+  source("ASMA_figures.R")
+    
+}
+
+```
+
+The monthly additional ASMA time for `r Airport_name` over time is shown in Figure \@ref(fig:ASMAtime). The results based on APDF and trajectory data are shown respectively in red and green.
+
+```{r ASMAtime, echo=FALSE, fig.cap="Additional ASMA time", fig.align='center'}
+
+include_graphics(paste0(dir, "Figures/Additional_ASMA_", Airport, ".png"))
+
+```
+
+
+
+
+
